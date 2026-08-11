@@ -53,4 +53,157 @@ kill <PID>
 
 ## Env vars
 
-Not required for the scaffold. Backend defaults to port `3001`; the app defaults to `http://localhost:3001`. Override with `PORT` and `EXPO_PUBLIC_API_URL` when needed.
+Copy `server/.env.example` to `server/.env` when you need to override defaults. Mock mode works out of the box with no `.env` file.
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3001` | Backend listen port |
+| `SEND_MODE` | `mock` | `mock` (no Meta traffic) or `live` (Step 5+) |
+| `SEND_ALLOWLIST` | _(empty)_ | Comma-separated E.164 numbers — see **When is allowlist required?** below |
+| `MAX_SENDS_PER_DAY` | `20` | Global daily send cap |
+| `MAX_SENDS_PER_RECIPIENT_PER_DAY` | `3` | Per-recipient daily send cap |
+| `RECIPIENT_COOLDOWN_SECONDS` | `300` | Minimum seconds between sends to the same number |
+| `MESSAGE_TYPE` | `template` | `template` or `text` (used in live mode, Step 5+) |
+
+Meta credentials (`WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_WABA_ID`) are only required for `SEND_MODE=live`. See `server/.env.example`.
+
+Mobile: `EXPO_PUBLIC_API_URL` defaults to `http://localhost:3001`.
+
+### When is `SEND_ALLOWLIST` required?
+
+| Scenario | Required? | Behavior |
+|---|---|---|
+| `SEND_MODE=mock`, allowlist **unset/empty** | No | Any valid E.164 number can be sent (mock only) |
+| `SEND_MODE=mock`, allowlist **set** | Optional, but enforced if set | Only listed numbers succeed — useful to mirror live behavior locally |
+| `SEND_MODE=live` | **Yes** | Server refuses to start without a non-empty allowlist; only listed numbers are sent |
+
+In live mode, use the same 1–5 numbers you OTP-verified in the Meta test dashboard.
+
+## API reference
+
+Base URL: `http://localhost:3001` (or whatever `PORT` is set to).
+
+All endpoints return JSON. `POST /api/send` expects `Content-Type: application/json`.
+
+### `GET /health`
+
+Liveness check. No query params or request body.
+
+**Response `200`**
+
+```json
+{ "ok": true }
+```
+
+### `POST /api/send`
+
+Send a WhatsApp message. In mock mode (default) nothing is sent to Meta — the server logs the send and returns a fake message id.
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `phone` | string | yes | Recipient in E.164 format, e.g. `"+85291234567"` |
+
+Example:
+
+```json
+{ "phone": "+85291234567" }
+```
+
+The `+` prefix is optional; digits only (`85291234567`) also work. Must be 7–15 digits after normalization.
+
+**Success response `200`**
+
+```json
+{
+  "ok": true,
+  "messageId": "wamid.MOCK-a1b2c3d4e5f67890",
+  "mock": true
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `ok` | boolean | Always `true` on success |
+| `messageId` | string | WhatsApp message id (`wamid.MOCK-…` in mock mode) |
+| `mock` | boolean | `true` when no Meta API call was made |
+
+**Error response `4xx` / `5xx`**
+
+```json
+{ "ok": false, "error": "Human-readable reason." }
+```
+
+| Status | When |
+|---|---|
+| `400` | Missing/invalid `phone` (not a string, empty, or not E.164) |
+| `403` | Recipient not on `SEND_ALLOWLIST` (enforced in live mode; also enforced in mock mode if allowlist is set) |
+| `429` | Cooldown active, per-recipient daily cap, or global daily cap |
+| `500` | Unexpected server error |
+
+Example cooldown error:
+
+```json
+{ "ok": false, "error": "Cooldown active for this recipient. Try again in 296s." }
+```
+
+## Verify Step 4 (mock send)
+
+No Meta account or `.env` file needed. Default is `SEND_MODE=mock`.
+
+### 1. Start the backend
+
+```bash
+cd server && npm run dev
+```
+
+Confirm startup log shows `SEND_MODE=mock`.
+
+### 2. Health check
+
+```bash
+curl http://localhost:3001/health
+# → {"ok":true}
+```
+
+### 3. Successful mock send
+
+```bash
+curl -s -X POST http://localhost:3001/api/send \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"+85291234567"}'
+```
+
+Expected: `200` with `"ok":true`, `"mock":true`, and a `"messageId"` starting with `wamid.MOCK-`.
+
+### 4. Cooldown blocks a rapid repeat
+
+Run the same curl again immediately:
+
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:3001/api/send \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"+85291234567"}'
+```
+
+Expected: `429` with `"Cooldown active for this recipient…"`.
+
+**Tip:** To test cooldown faster, add `RECIPIENT_COOLDOWN_SECONDS=5` to `server/.env` and restart.
+
+### 5. Confirm side effects (optional)
+
+- Server console logs: `[mock send] to=+85291234567 messageId=wamid.MOCK-…`
+- Send log written: `server/.sendlog.json` (gitignored — contains real phone numbers)
+
+### 6. Invalid phone (optional)
+
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:3001/api/send \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"not-a-number"}'
+```
+
+Expected: `400` with `"Phone must be E.164 format…"`.
+
+**Note:** With no `SEND_ALLOWLIST` in `server/.env`, mock sends work for any valid E.164 number. If you set it, only listed numbers succeed.
