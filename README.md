@@ -207,3 +207,50 @@ curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:3001/api/send \
 Expected: `400` with `"Phone must be E.164 format…"`.
 
 **Note:** With no `SEND_ALLOWLIST` in `server/.env`, mock sends work for any valid E.164 number. If you set it, only listed numbers succeed.
+
+## Verify Step 5 (live send)
+
+Requires Meta credentials from [WhatsApp → API Setup](https://developers.facebook.com/) (Step 2). On Meta's **test number**, OTP-verify each recipient in the dashboard before API sends work — max 5. Backend `SEND_ALLOWLIST` is separate and does not replace Meta's list.
+
+### 1. Configure `server/.env`
+
+```bash
+SEND_MODE=live
+SEND_ALLOWLIST=+15551234567          # same number(s) OTP-verified in Meta dashboard
+WHATSAPP_ACCESS_TOKEN=EAA...         # temporary token (~24 h); regenerate when expired
+WHATSAPP_PHONE_NUMBER_ID=...         # numeric ID from API Setup — not the display number
+WHATSAPP_WABA_ID=...
+```
+
+Restart the backend after any `.env` change. Confirm startup log shows `SEND_MODE=live`.
+
+### 2. Live send
+
+Use a number from both Meta's dashboard allowlist and `SEND_ALLOWLIST`:
+
+```bash
+curl -s -X POST http://localhost:3001/api/send \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"+15551234567"}'
+```
+
+Expected: `200` with a real WhatsApp message id and `"mock":false`:
+
+```json
+{
+  "ok": true,
+  "messageId": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI5...",
+  "mock": false
+}
+```
+
+`hello_world` should arrive on the recipient's phone. Server console: `[live send] to=+15551234567 messageId=wamid.…`
+
+### 3. Common live errors
+
+| Response | Likely cause |
+|---|---|
+| `"WhatsApp access token is expired or invalid…"` | Regenerate token in API Setup (error 190) |
+| `"Recipient is not on Meta's test allowlist…"` | Add and OTP-verify the number in the dashboard first |
+| `"Recipient is not on SEND_ALLOWLIST."` | Add the number to `SEND_ALLOWLIST` in `.env` |
+| `"Cooldown active for this recipient…"` | Guardrail working — wait or lower `RECIPIENT_COOLDOWN_SECONDS` for testing |

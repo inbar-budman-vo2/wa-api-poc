@@ -4,7 +4,7 @@ import express from "express";
 
 import { loadConfig, validateConfig } from "./config.js";
 import { GuardError, normalizePhone, runGuards } from "./guard.js";
-import { sendWhatsAppMessage } from "./whatsapp.js";
+import { sendWhatsAppMessage, WhatsAppError } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -39,7 +39,7 @@ app.post("/api/send", async (req, res) => {
       mock: result.mock,
     });
   } catch (err) {
-    if (err instanceof GuardError) {
+    if (err instanceof GuardError || err instanceof WhatsAppError) {
       res.status(err.statusCode).json({ ok: false, error: err.message });
       return;
     }

@@ -91,10 +91,24 @@ export function loadConfig(): Config {
   };
 }
 
+function requireEnv(value: string | undefined, name: string): void {
+  if (!value?.trim()) {
+    throw new Error(`SEND_MODE=live requires ${name}. Refusing to start.`);
+  }
+}
+
 export function validateConfig(config: Config): void {
-  if (config.sendMode === "live" && config.sendAllowlist.length === 0) {
+  if (config.sendMode !== "live") {
+    return;
+  }
+
+  if (config.sendAllowlist.length === 0) {
     throw new Error(
       "SEND_MODE=live requires a non-empty SEND_ALLOWLIST. Refusing to start.",
     );
   }
+
+  requireEnv(config.whatsappAccessToken, "WHATSAPP_ACCESS_TOKEN");
+  requireEnv(config.whatsappPhoneNumberId, "WHATSAPP_PHONE_NUMBER_ID");
+  requireEnv(config.whatsappWabaId, "WHATSAPP_WABA_ID");
 }
