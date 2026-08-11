@@ -1,0 +1,10 @@
+node_modules/
+dist/
+mobile/.expo/
+.env
+.env.*
+!.env.example
+server/.sendlog.json
+*.log
+.DS_Store
+.claude/
