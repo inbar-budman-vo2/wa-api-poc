@@ -1,9 +1,20 @@
 node_modules/
 dist/
 mobile/.expo/
+
+# Secrets — never commit
 .env
+server/.env
+**/.env
+
+# Local env overrides (e.g. .env.local) — not examples
 .env.*
+**/.env.*
+
+# Example env files are safe to commit
 !.env.example
+!**/.env.example
+
 server/.sendlog.json
 *.log
 .DS_Store
