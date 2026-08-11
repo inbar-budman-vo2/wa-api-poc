@@ -23,7 +23,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, sendMode: config.sendMode });
 });
 
 app.post("/api/send", async (req, res) => {
