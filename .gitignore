@@ -7,4 +7,3 @@ mobile/.expo/
 server/.sendlog.json
 *.log
 .DS_Store
-.claude/
