@@ -2,7 +2,18 @@
 
 Minimal proof of concept: type a phone number in an Expo app, tap Send, and a WhatsApp message goes out via Meta's Cloud API (or mock mode with no Meta traffic).
 
-For background, onboarding, and production guidance, see [docs/whatsapp-integration-guide.md](docs/whatsapp-integration-guide.md) and the [Confluence page](https://vo2-usa.atlassian.net/wiki/x/AQCDHQ).
+For Meta concepts, onboarding, pricing, limits, and production guidance, see the [WhatsApp Business Platform Integration Guide](https://vo2-usa.atlassian.net/wiki/x/AQCDHQ) on Confluence. This README covers how **this repo** works.
+
+## What this repo is
+
+```
+mobile/          Expo app — phone input, Send button, MOCK/LIVE badge
+server/          Express API — POST /api/send, guardrails, Meta call
+server/.env      Meta credentials + SEND_MODE (gitignored)
+server/.sendlog.json   Send history for caps/cooldown (gitignored)
+```
+
+The Meta access token never leaves the backend. The mobile app only knows `EXPO_PUBLIC_API_URL`.
 
 ## Prerequisites
 
@@ -37,6 +48,26 @@ cd mobile && npm run open:ios
 
 The app shows a **MOCK** or **LIVE** badge (from `GET /health`), a phone field, and **Send**. Success shows the message id; guardrail failures show a readable error (e.g. cooldown).
 
+## Mock vs live
+
+| Mode | Env | Behavior |
+|---|---|---|
+| `mock` (default) | `SEND_MODE=mock` or unset | Logs send, returns `wamid.MOCK-…`. No Meta traffic. No `.env` required. |
+| `live` | `SEND_MODE=live` + Meta vars + allowlist | HTTPS POST to `graph.facebook.com` with `hello_world` template. Server refuses to boot if credentials or allowlist are missing. |
+
+The mobile badge reads `sendMode` from `GET /health` so live sends are never accidental.
+
+## Two allowlists (live mode, test number)
+
+While on Meta's test number, both must include the same E.164 numbers:
+
+| Layer | Where | What blocks |
+|---|---|---|
+| **Meta** | Developer dashboard → WhatsApp → API Setup | Meta rejects unverified recipients |
+| **This POC** | `SEND_ALLOWLIST` in `server/.env` | Returns 403 before calling Meta |
+
+In mock mode `SEND_ALLOWLIST` is optional — omit it to accept any valid E.164.
+
 ## Env vars
 
 Copy examples, then edit:
@@ -55,11 +86,11 @@ cp mobile/.env.example mobile/.env   # optional; defaults to localhost:3001
 | `SEND_ALLOWLIST` | _(empty)_ | Comma-separated E.164. Required in live mode; optional in mock |
 | `MAX_SENDS_PER_DAY` | `20` | Global daily cap |
 | `MAX_SENDS_PER_RECIPIENT_PER_DAY` | `3` | Per-recipient daily cap |
-| `RECIPIENT_COOLDOWN_SECONDS` | `300` | Min seconds between sends to same number |
-| `MESSAGE_TYPE` | `template` | `template` or `text` (live only; `text` needs an open 24h window) |
-| `WHATSAPP_ACCESS_TOKEN` | — | Required for live |
+| `RECIPIENT_COOLDOWN_SECONDS` | `300` | Min seconds between sends to same number (Meta floor is 6s) |
+| `MESSAGE_TYPE` | `template` | POC live path uses `hello_world` template only; `text` is rejected |
+| `WHATSAPP_ACCESS_TOKEN` | — | Required for live (~24h for dashboard temp tokens) |
 | `WHATSAPP_PHONE_NUMBER_ID` | — | Numeric ID from dashboard, not display number |
-| `WHATSAPP_WABA_ID` | — | Required for live |
+| `WHATSAPP_WABA_ID` | — | Required at startup; not used in the send API call itself |
 
 In live mode the server refuses to start without a non-empty `SEND_ALLOWLIST` and all three Meta vars. Use the same 1–5 numbers you OTP-verified in the Meta test dashboard.
 
@@ -70,6 +101,49 @@ In live mode the server refuses to start without a non-empty `SEND_ALLOWLIST` an
 | `EXPO_PUBLIC_API_URL` | `http://localhost:3001` | Backend base URL only — no Meta credentials |
 
 Restart the backend after any `server/.env` change.
+
+## API
+
+Base URL: `http://localhost:3001`. All responses are JSON.
+
+### `GET /health`
+
+```json
+{ "ok": true, "sendMode": "mock" }
+```
+
+`sendMode` is `"mock"` or `"live"` (matches `SEND_MODE` in `server/.env`).
+
+### `POST /api/send`
+
+Request: `{ "phone": "+85291234567" }` — E.164 with or without `+` (stripped to digits before Meta).
+
+Success (same shape in both modes):
+
+```json
+{ "ok": true, "messageId": "wamid.…", "mock": true }
+```
+
+| Mode | `messageId` | `mock` |
+|---|---|---|
+| mock | `wamid.MOCK-…` | `true` |
+| live | `wamid.HBgL…` (from Meta) | `false` |
+
+Error:
+
+```json
+{ "ok": false, "error": "Human-readable reason." }
+```
+
+| Status | When |
+|---|---|
+| `400` | Invalid/missing phone; CSW closed; POC rejects `MESSAGE_TYPE=text` |
+| `401` | Meta token expired or invalid |
+| `403` | Not on `SEND_ALLOWLIST`; not on Meta's test allowlist |
+| `429` | Cooldown, per-recipient cap, global cap, or Meta rate limit |
+| `500` / `502` | Server or unexpected Meta error |
+
+Guards run in order before any Meta call: allowlist → cooldown → per-recipient daily cap → global daily cap.
 
 ## curl examples
 
@@ -88,31 +162,30 @@ curl -s -X POST http://localhost:3001/api/send \
   -d '{"phone":"+85291234567"}'
 ```
 
-Success:
+## Backend error messages (live mode)
 
-```json
-{ "ok": true, "messageId": "wamid.MOCK-…", "mock": true }
-```
+Meta errors are mapped to plain English:
 
-Error (e.g. cooldown):
-
-```json
-{ "ok": false, "error": "Cooldown active for this recipient. Try again in 296s." }
-```
-
-Common status codes: `400` invalid phone, `403` not on allowlist, `429` cooldown or daily cap, `500` server error. Live-mode Meta errors are mapped to plain English in the `error` field.
+| HTTP | Example `error` | Source |
+|---|---|---|
+| 401 | WhatsApp access token is expired or invalid… | Meta 190 |
+| 403 | Recipient is not on Meta's test allowlist… | Meta |
+| 403 | Recipient is not on SEND_ALLOWLIST. | Backend guard |
+| 429 | Cooldown active for this recipient. Try again in 296s. | Backend guard |
+| 429 | Pair rate limit: wait at least 6 seconds… | Meta 131056 |
+| 400 | Customer service window is closed. Use a template… | Meta 131047 |
 
 ## Meta limits (at a glance)
 
 | Limit | Value |
 |---|---|
 | New portfolio — unique recipients / 24h | 250 (portfolio-level) |
-| Same recipient — min interval | 6 seconds (Meta); POC default 300s |
+| Same recipient — min interval | 6 seconds (Meta); this POC defaults to 300s |
 | Throughput | 80 messages/second |
 | Test number — OTP-verified recipients | Max 5 |
 | Quality rating | Based on 7-day blocks/reports; `Flagged` → tier downgrade; `Restricted` → outbound halted |
 
-Full detail: [docs/whatsapp-integration-guide.md](docs/whatsapp-integration-guide.md).
+Full Meta detail: [Confluence guide](https://vo2-usa.atlassian.net/wiki/x/AQCDHQ).
 
 ## Troubleshooting
 
