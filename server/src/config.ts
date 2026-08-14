@@ -1,6 +1,12 @@
 export type SendMode = "mock" | "live";
 export type MessageType = "template" | "text";
 
+export interface TemplateParams {
+  customer_name: string;
+  advisor_name: string;
+  brand_name: string;
+}
+
 export interface Config {
   port: number;
   sendMode: SendMode;
@@ -12,6 +18,9 @@ export interface Config {
   whatsappAccessToken: string | undefined;
   whatsappPhoneNumberId: string | undefined;
   whatsappWabaId: string | undefined;
+  whatsappTemplateName: string;
+  whatsappTemplateLanguage: string;
+  templateParams: TemplateParams;
 }
 
 function parseSendMode(value: string | undefined): SendMode {
@@ -88,6 +97,16 @@ export function loadConfig(): Config {
     whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN,
     whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
     whatsappWabaId: process.env.WHATSAPP_WABA_ID,
+    whatsappTemplateName: process.env.WHATSAPP_TEMPLATE_NAME?.trim() || "hello_world",
+    whatsappTemplateLanguage:
+      process.env.WHATSAPP_TEMPLATE_LANGUAGE?.trim() || "en_US",
+    templateParams: {
+      customer_name:
+        process.env.TEMPLATE_PARAM_CUSTOMER_NAME?.trim() || "Jane",
+      advisor_name: process.env.TEMPLATE_PARAM_ADVISOR_NAME?.trim() || "Alex",
+      brand_name:
+        process.env.TEMPLATE_PARAM_BRAND_NAME?.trim() || "Example Brand",
+    },
   };
 }
 

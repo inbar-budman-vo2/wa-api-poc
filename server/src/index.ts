@@ -2,9 +2,41 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 
-import { loadConfig, validateConfig } from "./config.js";
+import {
+  loadConfig,
+  validateConfig,
+  type TemplateParams,
+} from "./config.js";
 import { GuardError, normalizePhone, runGuards } from "./guard.js";
 import { sendWhatsAppMessage, WhatsAppError } from "./whatsapp.js";
+
+function resolveTemplateParams(
+  body: unknown,
+  defaults: TemplateParams,
+): TemplateParams {
+  const raw =
+    body &&
+    typeof body === "object" &&
+    "params" in body &&
+    body.params &&
+    typeof body.params === "object"
+      ? (body.params as Record<string, unknown>)
+      : {};
+
+  const pick = (key: keyof TemplateParams): string => {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    return defaults[key];
+  };
+
+  return {
+    customer_name: pick("customer_name"),
+    advisor_name: pick("advisor_name"),
+    brand_name: pick("brand_name"),
+  };
+}
 
 dotenv.config();
 
@@ -31,12 +63,15 @@ app.post("/api/send", async (req, res) => {
     const phone = normalizePhone(req.body?.phone);
     runGuards(phone, config);
 
-    const result = await sendWhatsAppMessage(phone, config);
+    const params = resolveTemplateParams(req.body, config.templateParams);
+    const result = await sendWhatsAppMessage(phone, config, params);
 
     res.json({
       ok: true,
       messageId: result.messageId,
       mock: result.mock,
+      template: config.whatsappTemplateName,
+      language: config.whatsappTemplateLanguage,
     });
   } catch (err) {
     if (err instanceof GuardError || err instanceof WhatsAppError) {

@@ -53,7 +53,7 @@ The app shows a **MOCK** or **LIVE** badge (from `GET /health`), a phone field, 
 | Mode | Env | Behavior |
 |---|---|---|
 | `mock` (default) | `SEND_MODE=mock` or unset | Logs send, returns `wamid.MOCK-…`. No Meta traffic. No `.env` required. |
-| `live` | `SEND_MODE=live` + Meta vars + allowlist | HTTPS POST to `graph.facebook.com` with `hello_world` template. Server refuses to boot if credentials or allowlist are missing. |
+| `live` | `SEND_MODE=live` + Meta vars + allowlist | HTTPS POST to `graph.facebook.com` with an approved template (`hello_world` by default, or a custom template via env). Server refuses to boot if credentials or allowlist are missing. |
 
 The mobile badge reads `sendMode` from `GET /health` so live sends are never accidental.
 
@@ -87,7 +87,12 @@ cp mobile/.env.example mobile/.env   # optional; defaults to localhost:3001
 | `MAX_SENDS_PER_DAY` | `20` | Global daily cap |
 | `MAX_SENDS_PER_RECIPIENT_PER_DAY` | `3` | Per-recipient daily cap |
 | `RECIPIENT_COOLDOWN_SECONDS` | `300` | Min seconds between sends to same number (Meta floor is 6s) |
-| `MESSAGE_TYPE` | `template` | POC live path uses `hello_world` template only; `text` is rejected |
+| `MESSAGE_TYPE` | `template` | POC live path uses approved templates only; `text` is rejected |
+| `WHATSAPP_TEMPLATE_NAME` | `hello_world` | Approved template name. Static templates (e.g. `hello_world`) send without variables. Custom templates (e.g. `advisor_greeting`) fill `components` from `params` or defaults below. |
+| `WHATSAPP_TEMPLATE_LANGUAGE` | `en_US` | Must match the approved variant exactly (`en` vs `en_US` matters — check WhatsApp Manager or `GET /{WABA-ID}/message_templates`) |
+| `TEMPLATE_PARAM_CUSTOMER_NAME` | `Jane` | Default when request omits `params.customer_name` |
+| `TEMPLATE_PARAM_ADVISOR_NAME` | `Alex` | Default when request omits `params.advisor_name` |
+| `TEMPLATE_PARAM_BRAND_NAME` | `Example Brand` | Default when request omits `params.brand_name` |
 | `WHATSAPP_ACCESS_TOKEN` | — | Required for live (~24h for dashboard temp tokens) |
 | `WHATSAPP_PHONE_NUMBER_ID` | — | Numeric ID from dashboard, not display number |
 | `WHATSAPP_WABA_ID` | — | Required at startup; not used in the send API call itself |
@@ -116,7 +121,26 @@ Base URL: `http://localhost:3001`. All responses are JSON.
 
 ### `POST /api/send`
 
-Request: `{ "phone": "+85291234567" }` — E.164 with or without `+` (stripped to digits before Meta).
+Request:
+
+```json
+{ "phone": "+85291234567" }
+```
+
+Optional template variables (for custom templates such as `advisor_greeting`):
+
+```json
+{
+  "phone": "+85291234567",
+  "params": {
+    "customer_name": "Jane",
+    "advisor_name": "Alex",
+    "brand_name": "Example Brand"
+  }
+}
+```
+
+Phone is E.164 with or without `+` (stripped to digits before Meta). When `params` is omitted, the server uses `TEMPLATE_PARAM_*` env defaults. `hello_world` ignores `params`.
 
 Success (same shape in both modes):
 
@@ -160,6 +184,21 @@ curl http://localhost:3001/health
 curl -s -X POST http://localhost:3001/api/send \
   -H "Content-Type: application/json" \
   -d '{"phone":"+85291234567"}'
+```
+
+**Send with custom template variables** — set `WHATSAPP_TEMPLATE_NAME=advisor_greeting` in `server/.env` first:
+
+```bash
+curl -s -X POST http://localhost:3001/api/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phone": "+85291234567",
+    "params": {
+      "customer_name": "Jane",
+      "advisor_name": "Alex",
+      "brand_name": "Example Brand"
+    }
+  }'
 ```
 
 ## Backend error messages (live mode)
